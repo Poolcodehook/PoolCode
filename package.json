@@ -1,0 +1,16 @@
+{
+  "name": "poolcode-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mirrors the POOLCODE hook's on-chain version state into README.md, CHANGELOG.md and GitHub Releases.",
+  "scripts": {
+    "sync": "node scripts/sync.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
