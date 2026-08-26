@@ -14,7 +14,7 @@ Base Pool
 0 / 88 SWAPS
 
 **STATUS**
-ACTIVE
+VOTING
 
 ---
 
