@@ -8,13 +8,13 @@
 v1
 
 **ACTIVE MODULE**
-Base Pool
+BASE
 
 **NEXT VERSION**
 0 / 88 SWAPS
 
 **STATUS**
-VOTING
+BUILDING
 
 ---
 
@@ -23,7 +23,8 @@ VOTING
 | Token | POOLCODE |
 | Ticker | PCODE |
 | Supply | 100,000 |
-| Buy fee | 1% |
-| Sell fee | 4% |
+| Next buy fee | 1% |
+| Next sell fee | 4% |
+| Lifetime swaps | 0 |
 
-Every 88 swaps unlock the next pool version. Holders vote on what gets added next.
+Every 88 swaps open a 24-hour vote. Holders select which fixed module the next version activates.
