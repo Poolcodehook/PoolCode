@@ -58,6 +58,8 @@ const HOOK_ABI = [
   'function swapCountForNextVersion() view returns (uint256)',
   'function voteOpen() view returns (bool)',
   'function SWAPS_PER_VERSION() view returns (uint256)',
+  'function currentBuyFee() view returns (uint256)',
+  'function currentSellFee() view returns (uint256)',
   'event VersionActivated(uint256 indexed version, uint8 indexed moduleId)',
 ];
 
@@ -91,28 +93,36 @@ async function withRetry(label, fn, attempts = 4) {
  * Falls back to the individual getters if `versionState()` is unavailable, so a hook that predates
  * that helper still syncs.
  */
-async function readState(hook) {
+async function readState(hook, blockTag) {
   try {
-    const s = await withRetry('versionState()', () => hook.versionState());
+    const s = await withRetry('versionState()', () => hook.versionState({ blockTag }));
     return {
       version: BigInt(s.version ?? s[0]),
       moduleId: Number(s.moduleId ?? s[1]),
       countForNext: BigInt(s.countForNext ?? s[2]),
+      inVersionSwaps: BigInt(s.inVersionSwaps ?? s[3]),
+      lifetimeSwaps: BigInt(s.lifetimeSwaps ?? s[4]),
       votingOpen: Boolean(s.votingOpen ?? s[5]),
+      nextVersion: BigInt(s.nextVersion ?? s[6]),
+      deadline: BigInt(s.deadline ?? s[7]),
     };
   } catch (err) {
     console.error(`  versionState() unavailable, falling back to individual getters: ${err.message}`);
     const [version, moduleId, countForNext, votingOpen] = await Promise.all([
-      withRetry('currentVersion()', () => hook.currentVersion()),
-      withRetry('currentModule()', () => hook.currentModule()),
-      withRetry('swapCountForNextVersion()', () => hook.swapCountForNextVersion()),
-      withRetry('voteOpen()', () => hook.voteOpen()),
+      withRetry('currentVersion()', () => hook.currentVersion({ blockTag })),
+      withRetry('currentModule()', () => hook.currentModule({ blockTag })),
+      withRetry('swapCountForNextVersion()', () => hook.swapCountForNextVersion({ blockTag })),
+      withRetry('voteOpen()', () => hook.voteOpen({ blockTag })),
     ]);
     return {
       version: BigInt(version),
       moduleId: Number(moduleId),
       countForNext: BigInt(countForNext),
+      inVersionSwaps: 0n,
+      lifetimeSwaps: 0n,
       votingOpen: Boolean(votingOpen),
+      nextVersion: BigInt(version) + 1n,
+      deadline: 0n,
     };
   }
 }
@@ -138,15 +148,19 @@ async function activationBlock(hook, version) {
 
 // ── status ───────────────────────────────────────────────────────────────────
 /**
- * The three states the README reports:
+ * The two states the current hook reports:
  *   VOTING — 88 swaps landed, holders are choosing the next module
- *   READY  — the vote has been decided but the version has not been finalized on-chain yet
- *   ACTIVE — the ordinary state: swaps accumulating toward the next unlock
+ *   BUILDING — swaps are accumulating toward the next unlock
  */
-function statusOf({ votingOpen, countForNext }, swapsPerVersion) {
+function statusOf({ votingOpen }) {
   if (votingOpen) return 'VOTING';
-  if (countForNext >= swapsPerVersion) return 'READY';
-  return 'ACTIVE';
+  return 'BUILDING';
+}
+
+function formatFee(bps) {
+  const whole = bps / 100n;
+  const fraction = bps % 100n;
+  return fraction === 0n ? `${whole}%` : `${whole}.${fraction.toString().padStart(2, '0')}%`;
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -156,7 +170,10 @@ function statusOf({ votingOpen, countForNext }, swapsPerVersion) {
  * workflow sees no diff to commit.
  */
 function renderReadme(state, swapsPerVersion) {
-  const status = statusOf(state, swapsPerVersion);
+  const status = statusOf(state);
+  // versionState resets countForNext in the transaction that opens the ballot. Keep the completed
+  // milestone visible instead of presenting a misleading 0 / 88 while voting is active.
+  const progress = state.votingOpen ? swapsPerVersion : state.countForNext;
   return `<p align="center">
   <img src="pooli.png" alt="POOLCODE" width="220">
 </p>
@@ -170,7 +187,7 @@ v${state.version}
 ${moduleName(state.moduleId)}
 
 **NEXT VERSION**
-${state.countForNext} / ${swapsPerVersion} SWAPS
+${progress} / ${swapsPerVersion} SWAPS
 
 **STATUS**
 ${status}
@@ -182,16 +199,17 @@ ${status}
 | Token | POOLCODE |
 | Ticker | PCODE |
 | Supply | 100,000 |
-| Buy fee | 1% |
-| Sell fee | 4% |
+| Next buy fee | ${formatFee(state.buyFeeBps)} |
+| Next sell fee | ${formatFee(state.sellFeeBps)} |
+| Lifetime swaps | ${state.lifetimeSwaps} |
 
-Every 88 swaps unlock the next pool version. Holders vote on what gets added next.
+Every 88 swaps open a 24-hour vote. Holders select which fixed module the next version activates.
 `;
 }
 
 /** One CHANGELOG entry. Version 1 is genesis; every later version was chosen by a holder vote. */
 function renderChangelogEntry(version, moduleId) {
-  const name = version === 1n ? 'Genesis Pool' : moduleName(moduleId);
+  const name = moduleName(moduleId);
   const line = version === 1n ? '' : '\nChosen by holders';
   return `\n## v${version}\n${name}${line}\n`;
 }
@@ -272,9 +290,18 @@ async function main() {
     .then((v) => BigInt(v))
     .catch(() => DEFAULT_SWAPS_PER_VERSION);
 
-  const state = await readState(hook);
+  // Pin related calls to one already-mined block so the module, progress and its next fees can never
+  // come from opposite sides of a swap or version activation.
+  const blockTag = await withRetry('latest block', () => provider.getBlockNumber());
+  const [state, buyFeeBps, sellFeeBps] = await Promise.all([
+    readState(hook, blockTag),
+    withRetry('currentBuyFee()', () => hook.currentBuyFee({ blockTag })).then(BigInt),
+    withRetry('currentSellFee()', () => hook.currentSellFee({ blockTag })).then(BigInt),
+  ]);
+  state.buyFeeBps = buyFeeBps;
+  state.sellFeeBps = sellFeeBps;
   console.log(`chain state: v${state.version} · ${moduleName(state.moduleId)} · ` +
-              `${state.countForNext}/${swapsPerVersion} swaps · ${statusOf(state, swapsPerVersion)}`);
+              `${state.votingOpen ? swapsPerVersion : state.countForNext}/${swapsPerVersion} swaps · ${statusOf(state)}`);
 
   // README: write only when the rendered bytes actually differ.
   const readme = renderReadme(state, swapsPerVersion);
@@ -299,7 +326,7 @@ async function main() {
   setOutput('changed', String(readmeChanged || appended.length > 0));
   setOutput('version', String(state.version));
   setOutput('module_name', moduleName(state.moduleId));
-  setOutput('status', statusOf(state, swapsPerVersion));
+  setOutput('status', statusOf(state));
   setOutput('new_version', newVersion ? String(newVersion.version) : '');
 
   if (newVersion) {
