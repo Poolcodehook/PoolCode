@@ -1,24 +1,21 @@
 // Module id -> readable name.
 //
 // The hook stores a module as a uint8 that selects one branch of its fee arithmetic; the names below
-// are the human-facing labels for those ids. To add a module later, append one line — nothing else in
-// the sync reads this table by index, so the list can grow without touching any other file.
+// are the exact labels used by the deployed contract. MODULE_COUNT is fixed at four forever.
 //
 // Ids must match the constants in contracts/PoolCodeHook.sol:
 //   MODULE_BASE = 0, MODULE_TIDE = 1, MODULE_CASCADE = 2, MODULE_BEACON = 3
 export const MODULE_NAMES = {
-  0: 'Base Pool',
-  1: 'Swap Streak',
-  2: 'Liquidity Event',
-  3: 'Quiet Mode',
+  0: 'BASE',
+  1: 'TIDE',
+  2: 'CASCADE',
+  3: 'BEACON',
 };
 
 /**
  * Resolve a module id to its label.
  *
- * An id with no entry is reported as `Module <id>` rather than throwing: the chain is the source of
- * truth, so a hook upgraded with a module this table has not learned yet must still sync — it just
- * shows an unnamed module until someone adds the line.
+ * An unknown id is still rendered defensively, although the deployed hook rejects every id >= 4.
  */
 export function moduleName(id) {
   const key = Number(id);
