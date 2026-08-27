@@ -11,10 +11,10 @@ v1
 BASE
 
 **NEXT VERSION**
-0 / 88 SWAPS
+88 / 88 SWAPS
 
 **STATUS**
-BUILDING
+VOTING
 
 ---
 
@@ -25,6 +25,6 @@ BUILDING
 | Supply | 100,000 |
 | Next buy fee | 1% |
 | Next sell fee | 4% |
-| Lifetime swaps | 0 |
+| Lifetime swaps | 1909 |
 
 Every 88 swaps open a 24-hour vote. Holders select which fixed module the next version activates.
