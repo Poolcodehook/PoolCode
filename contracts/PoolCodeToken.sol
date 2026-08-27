@@ -58,6 +58,7 @@ pragma solidity ^0.8.26;
 // ....................................................................................................
 //
 //                                    https://x.com/pcodepool
+//                                    https://pcodepool.org
 //
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -423,32 +424,20 @@ contract PoolcodeToken is ERC20, Ownable, ReentrancyGuardTransient {
     /// swept repeatedly on one expired clock. No ETH moves here: totalRewardsPaid is charged only
     /// when the reserve actually withdraws.
     /// @return amount the ETH moved into the reserve's pending.
-    /// @dev The move itself is written in Yul. `_settle` stays in Solidity — it is the reward maths and
-    /// gains nothing from hand-encoding — but everything after it is plain mapping reads, three stores
-    /// and two guards, which assembly expresses without the bounds and cleanup code the compiler would
-    /// otherwise emit around each `mapping[key]` access. Slots are taken from `.slot` rather than
-    /// hardcoded indices, so reordering the state above cannot silently point this at the wrong
-    /// mapping, and `keccak256(0x00, 0x40)` over scratch space is the standard mapping-slot derivation
-    /// for `mapping(address => uint256)`.
+    /// @dev The move is written in Yul; `_settle` stays in Solidity. Slots come from `.slot`, so
+    /// reordering the state above cannot point this at the wrong mapping.
     ///
-    /// Two encoding notes. `add(add(clk, 1), RESERVE_INTERVAL)` is the assembly spelling of the
-    /// strict-inequality guard `block.timestamp <= clk + RESERVE_INTERVAL`: `lt(timestamp(), clk + 1 +
-    /// INTERVAL)` is exactly `timestamp <= clk + INTERVAL`, so the boundary second is still not
-    /// expired. And `rewardClock` is a `mapping(address => uint64)` whose values each occupy a whole
-    /// slot, so storing the full word from `timestamp()` is correct — nothing shares those bits, and a
-    /// unix timestamp is far inside 64 bits.
-    ///
-    /// The arithmetic is unchecked by construction, which is safe here for a reason that holds
-    /// structurally rather than by luck: the reserve's pending only ever grows by amounts that were
-    /// already part of `pending`, and the sum of all `pending` is bounded by
-    /// `totalRewardsCollected - totalRewardsPaid` — ETH that this contract actually holds. That total
-    /// cannot approach 2^256, so the `add` cannot overflow.
+    /// Three things the code does not say for itself. `add(add(clk, 1), RESERVE_INTERVAL)` spells the
+    /// `<=` guard Yul has no opcode for: `lt(timestamp(), clk + 1 + INTERVAL)` is exactly
+    /// `timestamp <= clk + INTERVAL`, so the boundary second is not yet expired. Storing a full word
+    /// into `rewardClock` is safe because its `uint64` values each occupy a whole slot — nothing
+    /// shares those bits. And the unchecked `add` cannot overflow: the reserve's pending only grows by
+    /// amounts already counted in `pending`, whose sum is bounded by the ETH this contract holds.
     function reclaim(address account) external returns (uint256 amount) {
         address reserve_ = reserve;
         bytes32 sigRewardNotExpired = 0xed5be5ce00000000000000000000000000000000000000000000000000000000;
         bytes32 sigNothingToClaim = 0x969bf72800000000000000000000000000000000000000000000000000000000;
         assembly {
-            // the reserve's own pending is not reclaimable
             if eq(account, reserve_) {
                 mstore(0x00, sigRewardNotExpired)
                 revert(0x00, 0x04)
@@ -458,19 +447,16 @@ contract PoolcodeToken is ERC20, Ownable, ReentrancyGuardTransient {
         _settle(account);
 
         assembly {
-            // clk := rewardClock[account]
             mstore(0x00, account)
             mstore(0x20, rewardClock.slot)
             let clockSlot := keccak256(0x00, 0x40)
             let clk := sload(clockSlot)
 
-            // never started, or not yet a full RESERVE_INTERVAL old
             if or(iszero(clk), lt(timestamp(), add(add(clk, 1), RESERVE_INTERVAL))) {
                 mstore(0x00, sigRewardNotExpired)
                 revert(0x00, 0x04)
             }
 
-            // amount := pending[account]
             mstore(0x00, account)
             mstore(0x20, pending.slot)
             let pendingSlot := keccak256(0x00, 0x40)
@@ -480,11 +466,9 @@ contract PoolcodeToken is ERC20, Ownable, ReentrancyGuardTransient {
                 revert(0x00, 0x04)
             }
 
-            // pending[account] = 0; rewardClock[account] = block.timestamp (restart the window)
             sstore(pendingSlot, 0)
             sstore(clockSlot, timestamp())
 
-            // pending[reserve] += amount — the reserve is excluded, so this only ever grows by reclaims
             mstore(0x00, reserve_)
             mstore(0x20, pending.slot)
             let reserveSlot := keccak256(0x00, 0x40)
