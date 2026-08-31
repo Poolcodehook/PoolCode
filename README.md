@@ -25,6 +25,6 @@ VOTING
 | Supply | 100,000 |
 | Next buy fee | 1% |
 | Next sell fee | 4% |
-| Lifetime swaps | 2173 |
+| Lifetime swaps | 2174 |
 
 Every 88 swaps open a 24-hour vote. Holders select which fixed module the next version activates.
